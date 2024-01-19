@@ -1,0 +1,5 @@
+*.npz
+.cache
+__pycache__
+*.sqlite
+*.nsys-rep
