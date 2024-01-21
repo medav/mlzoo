@@ -2,14 +2,24 @@ import sys
 import functools
 import itertools
 import numpy as np
+import random
 
-from . import ncu
+from . import prof
 from . import cache
 
+def shortstr(s : str, maxlen : int = 20):
+    if len(s) <= maxlen: return s
+    return s[:maxlen - 3] + '...'
 
-def overlap_lat(ks : list[ncu.Kernel]):
+def can_overlap(ks : list[prof.Kernel]):
+    if sum(k.threads_per_block for k in ks) > 1024: return False
+    if sum(k.tot_smem for k in ks) > 192 * 1024: return False
+    if sum(k.reg_per_block for k in ks) > 65536: return False
+    return True
+
+
+def overlap_lat(ks : list[prof.Kernel]):
     new_lat = max(k.lat for k in ks)
-
     slowdown = 1
 
     tot_dram = sum(k.dram_util for k in ks) / 0.9
@@ -26,11 +36,11 @@ def overlap_lat(ks : list[ncu.Kernel]):
 
 def powerset(iterable):
     s = list(iterable)
-    return itertools.chain.from_iterable(
-        itertools.combinations(s, r) for r in range(len(s) + 1))
+    return list(itertools.chain.from_iterable(
+        itertools.combinations(s, r) for r in range(len(s) + 1)))
 
 
-def model_latency(kern_lists : list[list[ncu.Kernel]]):
+def model_latency(kern_lists : list[list[prof.Kernel]]):
     dp_times = np.zeros(tuple(len(kl) + 1 for kl in kern_lists))
     dp_path = np.empty(tuple(len(kl) + 1 for kl in kern_lists), dtype=set)
 
@@ -40,11 +50,16 @@ def model_latency(kern_lists : list[list[ncu.Kernel]]):
 
         if all(i == 0 for i in idx): return 0, set()
 
-        for s in powerset(range(len(kern_lists))):
+        sets = powerset(range(len(kern_lists)))
+        random.shuffle(sets)
+
+        for s in sets:
             s = set(i for i in s if idx[i] > 0)
             if len(s) == 0: continue
 
             overlap_kerns = [kern_lists[i][idx[i] - 1] for i in s]
+
+            if not can_overlap(overlap_kerns): continue
 
             resid_idx = tuple(
                 idx[i] - 1 if i in s else idx[i]
@@ -79,20 +94,24 @@ def model_latency(kern_lists : list[list[ncu.Kernel]]):
     return dp_times[tuple(len(kl) for kl in kern_lists)], path
 
 @cache.cache_pickle
-def cached_ncu(prog_args):
-    return ncu.run_ncu(prog_args)
-
+def cached_prof(prog_args):
+    return prof.run_prof(prog_args)
 
 if __name__ == '__main__':
     idx = sys.argv.index('--')
     tool_args = sys.argv[1:idx]
     prog_args = sys.argv[idx + 1:]
 
+    # kerns = cached_prof(prog_args)
+
+    # for k in kerns:
+    #     print(shortstr(k.name), k.grid, k.block)
+
     # resnet50 = ['python', '-m', 'resnet50.examples.single_fwd']
     # bert = ['python', '-m', 'bert.examples.single_fwd']
 
     num_mult = 4
-    kerns = cached_ncu(prog_args)[:8]
+    kerns = cached_prof(prog_args)[:16]
 
     orig_lat = sum(k.lat for k in kerns) * num_mult
     print(f'Original latency: {orig_lat:.2f} ms')
