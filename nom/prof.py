@@ -1,5 +1,6 @@
 import os
 import sys
+import functools
 import tempfile
 import pandas as pd
 from dataclasses import dataclass
@@ -25,6 +26,13 @@ class Kernel:
     static_smem : int
     dynamic_smem : int
     metrics : dict
+
+    @functools.cached_property
+    def sanitized_name(self):
+        sn = self.name.replace('void ', '').replace('at::native::', '').replace('<unnamed>::', '').replace('cutlass::', '')
+        if '<' in sn: sn = sn[:sn.index('<')]
+        if '(' in sn: sn = sn[:sn.index('(')]
+        return sn
 
     @property
     def threads_per_block(self): return self.block[0] * self.block[1] * self.block[2]

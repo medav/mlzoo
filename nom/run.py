@@ -39,8 +39,10 @@ def powerset(iterable):
     return list(itertools.chain.from_iterable(
         itertools.combinations(s, r) for r in range(len(s) + 1)))
 
+def no_overlap_latency(kern_lists : list[list[prof.Kernel]]):
+    return sum(sum(k.lat for k in kl) for kl in kern_lists)
 
-def model_latency(kern_lists : list[list[prof.Kernel]]):
+def optimal_latency(kern_lists : list[list[prof.Kernel]]):
     dp_times = np.zeros(tuple(len(kl) + 1 for kl in kern_lists))
     dp_path = np.empty(tuple(len(kl) + 1 for kl in kern_lists), dtype=set)
 
@@ -93,6 +95,50 @@ def model_latency(kern_lists : list[list[prof.Kernel]]):
 
     return dp_times[tuple(len(kl) for kl in kern_lists)], path
 
+def print_path(window : list[list[prof.Kernel]], path : list[set[int]], num_streams : int):
+    COL_WIDTH = 20
+    stream_idx = {i: 0 for i in range(num_streams)}
+
+    for i, s in enumerate(path):
+        cols = []
+        for j in range(num_streams):
+            if j in s:
+                k = window[j][stream_idx[j]]
+                cols.append(shortstr(k.sanitized_name, maxlen=COL_WIDTH).ljust(COL_WIDTH))
+                stream_idx[j] += 1
+            else:
+                cols.append(' ' * COL_WIDTH)
+
+        print(f'{i:3d} | ' + ' | '.join(cols) + ' |')
+
+def fixed_window_latency(kern_lists : list[list[prof.Kernel]], winlen=8):
+    tot_lat = 0
+    paths = []
+    i = 0
+    while not all(len(kl) == 0 for kl in kern_lists):
+        window = [
+            kl[:winlen] if len(kl) > winlen else kl
+            for kl in kern_lists
+        ]
+
+        kern_lists = [
+            kl[winlen:] if len(kl) > winlen else []
+            for kl in kern_lists
+        ]
+
+        orig_lat = no_overlap_latency(window)
+        window_lat, window_path = optimal_latency(window)
+        tot_lat += window_lat
+        paths.append(window_path)
+
+        print(f'Window {i}: {window_lat:.2f} ms ({orig_lat / window_lat:.2f} x)')
+        print_path(window, window_path, len(window))
+        print()
+
+        i += 1
+
+    return tot_lat, paths
+
 @cache.cache_pickle
 def cached_prof(prog_args):
     return prof.run_prof(prog_args)
@@ -102,28 +148,15 @@ if __name__ == '__main__':
     tool_args = sys.argv[1:idx]
     prog_args = sys.argv[idx + 1:]
 
-    # kerns = cached_prof(prog_args)
-
-    # for k in kerns:
-    #     print(shortstr(k.name), k.grid, k.block)
-
-    # resnet50 = ['python', '-m', 'resnet50.examples.single_fwd']
-    # bert = ['python', '-m', 'bert.examples.single_fwd']
-
-    num_mult = 4
-    kerns = cached_prof(prog_args)[:16]
+    num_mult = 2
+    kerns = cached_prof(prog_args)
 
     orig_lat = sum(k.lat for k in kerns) * num_mult
     print(f'Original latency: {orig_lat:.2f} ms')
 
-    new_lat, path = model_latency([kerns] * num_mult)
+    new_lat, path = fixed_window_latency([kerns] * num_mult, winlen=16)
     print(f'New latency: {new_lat:.2f} ms')
 
     print(f'Speedup: {orig_lat / new_lat:.2f}x')
 
-    for i in range(num_mult):
-        for s in path:
-            if i in s: print(i, end='')
-            else: print('-', end='')
-        print()
 
