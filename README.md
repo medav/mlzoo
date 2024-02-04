@@ -15,9 +15,6 @@ many importand ML models**
 5. **Performance Profiling**: Write code in a way that enables easy performance profiling. Specifically, I aim to ensure code works with PyTorch Dynamo where possible.
 6. **Modularity**: All apps are written completely independently of eachother to allow any app to be ripped out and used elsewhere.
 
-
-## Overview of the Zoo
-
 ## Levels of Validation
 Each of the models in this repository is based on some existing academic
 publication presenting that model. The implementations here are intended to
@@ -32,3 +29,18 @@ confidence / validation has been achieved.
 | Level 1 | The model in this repository was written based on official code implementation by the original authors. Additional code references may have been used as well. |
 | Level 2 | In addition to being based on reference code (Level 1), the model in this repository has been studied to provide similar (eyeball validation) loss values when running on provided reference training data. |
 | Level 3 | The model in this repository has been verified to produce numerically exact output given identical input and weight values. |
+
+
+## Overview of the Zoo
+| Application | Year | Paper | Validation | Description |
+|:-|-|-|-|:-|
+| [BERT](./bert) | 2016 | [arXiv](https://arxiv.org/pdf/1810.04805.pdf) | Level 3 | Natural language processing |
+| [DLRM](./dlrm) | 2019 | [arXiv](https://arxiv.org/pdf/1906.00091.pdf) | Level 1 | Recommendation Model |
+| [MeshGraphNets](./mgn) | 2018 | [arXiv](https://arxiv.org/abs/2010.03409) | Level 3 | Mesh-based physics simulation with learned dynamics |
+| [NeRF](./nerf) | 2020 | [arXiv](https://arxiv.org/pdf/2003.08934.pdf) | Level 1 | View Synthesis with Neural Radience Fields |
+| [PINNs](./pinn) | 2019 | [ScienceDirect](https://www.sciencedirect.com/science/article/pii/S0021999118307125) | Level 2 | Physics-Informed Neural Networks |
+| [ResNet50](./resnet50) | TODO | TODO | TODO | Image classification |
+| [RNN-T](./rnnt) | 2012 | [arXiv](https://arxiv.org/pdf/1211.3711.pdf) | Level 3 | Speech to text |
+| [SSD-ResNet34](./ssdrn34) | 2016 | [arXiv](https://arxiv.org/pdf/1512.02325.pdf) | Level 1 | Object detection |
+| [TabNet](./tabnet) | 2019 | [arXiv](https://arxiv.org/pdf/1908.07442.pdf) | Level 2 | Learning on tabular data |
+| [3D-UNET](./unet) | 2016 | [arXiv](https://arxiv.org/pdf/1606.06650.pdf) | Level 1 | 3D image segmentation for cancer detection |
