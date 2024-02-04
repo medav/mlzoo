@@ -1,11 +1,11 @@
 # BERT (2018)
 
-|||
-|-|-|
-| Original Paper | [arXiv](https://arxiv.org/pdf/1810.04805.pdf) |
-| Original Source | [GitHub](https://github.com/google-research/bert) |
-| Reference Source | [HuggingFace](https://huggingface.co/bert-large-uncased-whole-word-masking-finetuned-squad) |
-|||
+Original Paper: [arXiv](https://arxiv.org/pdf/1810.04805.pdf)
+
+|Code Source|Link|License|
+|:-|:-|:-|
+| Original Source | [GitHub](https://github.com/google-research/bert) | Apache V2.0 ([LICENSE.google.bert](../licenses/LICENSE.google.bert)) |
+| Reference Source | [HuggingFace](https://huggingface.co/bert-large-uncased-whole-word-masking-finetuned-squad) | Apache V2.0 ([LICENSE.generic.apache2](../licenses/LICENSE.generic.apache2)) |
 
 ## Getting Started
 Extracting weights from the reference (requires HF transformers):
@@ -18,7 +18,7 @@ $ python -m bert.ref.extract_weights
 |-|-|
 | SQuAD Inference | Runs a question-answer inference on a predefined context and question |
 | Single Forward | Runs a single forward pass of batch size 1, seqlen 512 through the encoder |
-|||
+
 
 How to run:
 ```bash
@@ -35,7 +35,4 @@ $ python -m bert.examples.single_fwd
 
 
 ## Validation
-This code was validated to be faithful to the reference in `ref/` which is from
-the HuggingFace transformers codebase. We are not aware of any differences
-between the HF and original Google code but don't discount the possibility there
-could be differences.
+**Level 3**: The model in this repository has been verified to produce numerically exact output given identical input and weight values.
