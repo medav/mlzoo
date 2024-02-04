@@ -14,3 +14,21 @@ many importand ML models**
 4. **Distillation of Algorithmic and Systems contributions**: Provide (where possible) the ability to generate synthetic data with realistic input shapes for the purpose of enabling systems research without the need for original training data.
 5. **Performance Profiling**: Write code in a way that enables easy performance profiling. Specifically, I aim to ensure code works with PyTorch Dynamo where possible.
 6. **Modularity**: All apps are written completely independently of eachother to allow any app to be ripped out and used elsewhere.
+
+
+## Overview of the Zoo
+
+## Levels of Validation
+Each of the models in this repository is based on some existing academic
+publication presenting that model. The implementations here are intended to
+reproduce the original model as faithfully as possible, adopting "default"
+hyperparameters if such defaults exist. To provide further information on how
+accurate these recreations are, the following table summaraizes what level of
+confidence / validation has been achieved.
+
+| Validation Level | Description |
+|-|-|
+| Level 0 | The model in this repository was written based on only the original academic publication. I.e. No code reference was used (Either was not available or not found). |
+| Level 1 | The model in this repository was written based on official code implementation by the original authors. Additional code references may have been used as well. |
+| Level 2 | In addition to being based on reference code (Level 1), the model in this repository has been studied to provide similar (eyeball validation) loss values when running on provided reference training data. |
+| Level 3 | The model in this repository has been verified to produce numerically exact output given identical input and weight values. |
