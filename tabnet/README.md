@@ -17,6 +17,4 @@ TODO
 
 
 ## Validation
-This code was written based heavily on the original TensorFlow implementation
-from the paper's original authors. Numerical validation has not been performed
-so this implementation may produce different results.
+**Level 2**: In addition to being based on reference code (Level 1), the model in this repository has been studied to provide similar (eyeball validation) loss values when running on provided reference training data.
