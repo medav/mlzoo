@@ -11,7 +11,7 @@ def exclusive_cumprod(x : torch.Tensor):
 
 class NerfEmbedding(torch.nn.Module):
     @dataclass
-    class Params:
+    class Config:
         identity : bool = True
         include_input : bool = True
         input_dims : int = 3
@@ -20,38 +20,38 @@ class NerfEmbedding(torch.nn.Module):
         log_sampling : bool = True
         periodic_fns : list[str] = field(default_factory=lambda: ['sin', 'cos'])
 
-    def __init__(self, params : Params):
+    def __init__(self, config : Config):
         super().__init__()
-        self.params = params
+        self.config = config
 
 
-        if params.log_sampling:
+        if config.log_sampling:
             freq_bands = 2.0 ** np.linspace(
-                0.0, params.max_freq_log2, params.num_freqs)
+                0.0, config.max_freq_log2, config.num_freqs)
         else:
             freq_bands = np.linspace(
-                2.0 ** 0.0, 2.0 ** params.max_freq_log2, params.num_freqs)
+                2.0 ** 0.0, 2.0 ** config.max_freq_log2, config.num_freqs)
 
         self.freq_bands = freq_bands
 
         # TODO: Clean this up
-        if params.identity:
-            self.out_dim = params.input_dims
+        if config.identity:
+            self.out_dim = config.input_dims
         else:
             self.out_dim = (
-                len(freq_bands) * len(params.periodic_fns) +
-                (1 if params.include_input else 0)
-            ) * params.input_dims
+                len(freq_bands) * len(config.periodic_fns) +
+                (1 if config.include_input else 0)
+            ) * config.input_dims
 
 
     def forward(self, x : torch.Tensor):
-        if self.params.identity: return x
+        if self.config.identity: return x
         else:
             out = []
-            if self.params.include_input: out.append(x)
+            if self.config.include_input: out.append(x)
 
             for freq in self.freq_bands:
-                for fn in self.params.periodic_fns:
+                for fn in self.config.periodic_fns:
                     out.append({
                         'sin': torch.sin,
                         'cos': torch.cos
@@ -70,7 +70,17 @@ class Nerf(torch.nn.Module):
         weights : torch.Tensor
         depth_map : torch.Tensor
 
-    default_x_enc_params = NerfEmbedding.Params(
+    @dataclass
+    class Config:
+        x_enc_config : NerfEmbedding.Config
+        d_enc_config : NerfEmbedding.Config
+        out_ch : int
+        hidden_dim : int
+        num_layers : int
+        skip : int
+        use_viewdirs : bool
+
+    default_x_enc_config = NerfEmbedding.Config(
         identity=False,
         include_input=True,
         input_dims=3,
@@ -79,7 +89,7 @@ class Nerf(torch.nn.Module):
         log_sampling=True,
         periodic_fns=['sin', 'cos'])
 
-    default_d_enc_params = NerfEmbedding.Params(
+    default_d_enc_config = NerfEmbedding.Config(
         identity=False,
         include_input=True,
         input_dims=3,
@@ -88,54 +98,53 @@ class Nerf(torch.nn.Module):
         log_sampling=True,
         periodic_fns=['sin', 'cos'])
 
-    def __init__(
-        self,
-        x_enc_params : NerfEmbedding.Params = default_x_enc_params,
-        d_enc_params : NerfEmbedding.Params = default_d_enc_params,
-        out_ch : int = 4,          # Num output channels
-        hidden_dim : int = 256,    # Num features for hidden layers
-        num_layers : int = 8,      # Num hidden layers,
-        skip : int = 4,            # Which layer has skip connection
-        use_viewdirs : bool = True # Use viewdirs as input
-    ):
-        super().__init__()
+    default_nerf_config = Config(
+        x_enc_config=default_x_enc_config,
+        d_enc_config=default_d_enc_config,
+        out_ch=4,
+        hidden_dim=256,
+        num_layers=8,
+        skip=4,
+        use_viewdirs=True
+    )
 
+    def __init__(self, config : Config):
+        super().__init__()
+        self.config = config
         preskip_layers = []
         postskip_layers = []
 
-        self.x_enc = NerfEmbedding(x_enc_params)
-        self.d_enc = NerfEmbedding(d_enc_params)
+        self.x_enc = NerfEmbedding(config.x_enc_config)
+        self.d_enc = NerfEmbedding(config.d_enc_config)
 
         in_features = self.x_enc.out_dim
 
-        for i in range(num_layers):
-            if i <= skip:
-                preskip_layers.append(torch.nn.Linear(in_features, hidden_dim))
+        for i in range(config.num_layers):
+            if i <= config.skip:
+                preskip_layers.append(torch.nn.Linear(in_features, config.hidden_dim))
                 preskip_layers.append(torch.nn.ReLU())
             else:
-                postskip_layers.append(torch.nn.Linear(in_features, hidden_dim))
+                postskip_layers.append(torch.nn.Linear(in_features, config.hidden_dim))
                 postskip_layers.append(torch.nn.ReLU())
 
-            if i != skip: in_features = hidden_dim
+            if i != config.skip: in_features = config.hidden_dim
             else: in_features = in_features + self.x_enc.out_dim
 
         self.preskip = torch.nn.Sequential(*preskip_layers)
         self.postskip = torch.nn.Sequential(*postskip_layers)
 
-        self.use_viewdirs = use_viewdirs
-
-        if use_viewdirs:
-            self.alpha = torch.nn.Linear(hidden_dim, 1)
-            self.bottleneck = torch.nn.Linear(hidden_dim, 256)
+        if config.use_viewdirs:
+            self.alpha = torch.nn.Linear(config.hidden_dim, 1)
+            self.bottleneck = torch.nn.Linear(config.hidden_dim, 256)
 
             self.rgb = torch.nn.Sequential(*[
-                torch.nn.Linear(256 + self.d_enc.out_dim, hidden_dim // 2),
+                torch.nn.Linear(256 + self.d_enc.out_dim, config.hidden_dim // 2),
                 torch.nn.ReLU(),
-                torch.nn.Linear(hidden_dim // 2, 3)
+                torch.nn.Linear(config.hidden_dim // 2, 3)
             ])
 
         else:
-            self.decode = torch.nn.Linear(hidden_dim, out_ch)
+            self.decode = torch.nn.Linear(config.hidden_dim, config.out_ch)
 
     def forward(self, x : torch.Tensor, d : torch.Tensor = None):
         x_enc = self.x_enc(x)
@@ -144,7 +153,7 @@ class Nerf(torch.nn.Module):
         resid = torch.cat([preskip_out, x_enc], dim=-1)
         encoded = self.postskip(resid)
 
-        if self.use_viewdirs:
+        if self.config.use_viewdirs:
             assert d is not None
             d_enc = self.d_enc(d)
 
@@ -162,7 +171,7 @@ class Nerf(torch.nn.Module):
         rays_d : torch.Tensor, # [N, 3]
         raw_noise_std : float = 0.0,
         white_bg : bool = False
-    ):
+    ) -> InterpretedResult:
         """Interpret raw network output.
 
         N.B. This is mostly a copy of `raw2outputs` from the original NeRF.
@@ -192,11 +201,11 @@ class Nerf(torch.nn.Module):
         # weights : [N, S]
         weights = alpha * exclusive_cumprod(1. - alpha + 1e-10)
 
-        # Weighted color of each sample along each ray.
+        # Weighted color of each ray.
         # rgb_map : [N, 3]
         rgb_map = torch.sum(weights[..., None] * rgb, dim=-2)
 
-        # Weighted depth of each sample along each ray.
+        # Weighted depth of each ray.
         # depth_map : [N]
         depth_map = torch.sum(weights * z_vals, dim=-1)
 
@@ -227,7 +236,7 @@ class Nerf(torch.nn.Module):
         near : int = 0,
         far : int = 1,
         lindisp : bool = False
-    ):
+    ) -> InterpretedResult:
         num_rays = rays_o.shape[0]
         t_vals = torch.linspace(
             0, 1, steps=coarse_samples, device=rays_o.device, dtype=rays_o.dtype)
@@ -238,7 +247,7 @@ class Nerf(torch.nn.Module):
         z_vals = z_vals.broadcast_to([num_rays, coarse_samples])
         xs = rays_o[..., None, :] + rays_d[..., None, :] * z_vals[..., :, None]
 
-        if self.use_viewdirs:
+        if self.config.use_viewdirs:
             viewdirs = torch.nn.functional.normalize(rays_d, dim=-1) \
                 .unsqueeze(-2) \
                 .broadcast_to(xs.shape)
@@ -247,8 +256,4 @@ class Nerf(torch.nn.Module):
         res = self.interpret(self.forward(xs, viewdirs), z_vals, rays_d)
 
         return res
-
-
-
-
 

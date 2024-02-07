@@ -13,5 +13,6 @@ rays, target = ds[0:65536]
 
 rays = rays.half().cuda()
 
-for _ in range(1000):
-    net.render_rays(rays[0], rays[1], ds.focal, 8, near=2, far=6)
+res = net.render_rays(rays[0], rays[1], ds.focal, 8, near=2, far=6)
+
+res.rgb_map.sum().backward()
