@@ -12,6 +12,9 @@ class FeatureColumn:
     @property
     def dtype(self): return np.float32
 
+    def make_synthetic(self, num_samples : int) -> np.ndarray:
+        return np.random.random(num_samples).astype(self.dtype)
+
     def preprocess(self, col : np.ndarray) -> np.ndarray: return col
 
     def make_encoder(self) -> torch.nn.Module:
@@ -26,6 +29,9 @@ class IntColumn(NumericColumn):
     @property
     def dtype(self): return np.int64
 
+    def make_synthetic(self, num_samples : int) -> np.ndarray:
+        return np.random.randint(0, 10, num_samples).astype(self.dtype)
+
 @dataclass
 class CategoricalColumn(FeatureColumn):
     num_buckets : int
@@ -36,6 +42,10 @@ class CategoricalColumn(FeatureColumn):
 
     @property
     def dtype(self): return np.int64
+
+    def make_synthetic(self, num_samples : int) -> np.ndarray:
+        return np.random.randint(0, self.num_buckets, num_samples) \
+            .astype(self.dtype)
 
     def preprocess(self, col : np.ndarray) -> np.ndarray:
         return self.hash_fn(col) % self.num_buckets
