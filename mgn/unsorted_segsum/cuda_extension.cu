@@ -11,6 +11,14 @@
 
 #define THREADS_PER_BLOCK 128
 
+#define CUDA_CHECK_ERRORS() { \
+    cudaError_t err = cudaGetLastError(); \
+\
+    if (err != cudaSuccess) { \
+        fprintf(stderr, "CUDA Error: %s %s %d\n", cudaGetErrorString(err),  __FILE__, __LINE__); \
+    } \
+}
+
 template<typename scalar_t>
 __device__ scalar_t atomicAddProxy(scalar_t * address, scalar_t val) {
     return atomicAdd(address, val);
@@ -68,6 +76,8 @@ at::Tensor unsorted_segment_sum_fwd_cuda(
         );
     }));
 
+    CUDA_CHECK_ERRORS();
+
     return out;
 }
 
@@ -110,6 +120,8 @@ at::Tensor unsorted_segment_sum_bwd_cuda(
             (int)D
         );
     }));
+
+    CUDA_CHECK_ERRORS();
 
     return out;
 }
