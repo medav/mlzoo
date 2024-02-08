@@ -162,11 +162,11 @@ class HyperElasticityModel(torch.nn.Module):
         #
 
         node_type_oh = \
-            torch.nn.functional.one_hot(x.node_type, num_classes=NodeType.SIZE) \
+            torch.nn.functional.one_hot(x.node_type, num_classes=int(NodeType.SIZE)) \
                 .squeeze()
 
         known_vel = x.target_world_pos - x.world_pos
-        known_vel[x.node_type != NodeType.NORMAL, :] = 0.0
+        known_vel[x.node_type != int(NodeType.NORMAL), :] = 0.0
         node_features = torch.cat([known_vel, node_type_oh], dim=-1)
 
         #
@@ -219,7 +219,7 @@ class HyperElasticityModel(torch.nn.Module):
             delta_x_norm = self.out_norm(delta_x)
 
         residuals = (delta_x_norm - pred).sum(dim=-1)
-        mask = (x.node_type == NodeType.NORMAL).squeeze()
+        mask = (x.node_type == int(NodeType.NORMAL)).squeeze()
         return residuals[mask].pow(2).mean()
 
 

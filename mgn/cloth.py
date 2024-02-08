@@ -83,7 +83,7 @@ class ClothModel(torch.nn.Module):
         """Predicts Delta V"""
 
         node_type_oh = \
-            torch.nn.functional.one_hot(x.node_type, num_classes=NodeType.SIZE) \
+            torch.nn.functional.one_hot(x.node_type, num_classes=int(NodeType.SIZE)) \
                 .squeeze()
 
         velocity = x.world_pos - x.prev_world_pos
@@ -119,7 +119,7 @@ class ClothModel(torch.nn.Module):
             target_accel_norm = self.out_norm(target_accel)
 
         residuals = (target_accel_norm - pred).sum(dim=-1)
-        mask = (x.node_type == NodeType.NORMAL).squeeze()
+        mask = (x.node_type == int(NodeType.NORMAL)).squeeze()
         return residuals[mask].pow(2).mean()
 
 class ClothData(torch.utils.data.Dataset):
