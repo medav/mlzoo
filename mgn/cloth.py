@@ -3,9 +3,10 @@ import torch
 import json
 import os
 import numpy as np
-import graphnet as GNN
 from dataclasses import dataclass
 
+from . import graphnet as GNN
+from . import meshgen
 
 class NodeType(enum.IntEnum):
     NORMAL = 0
@@ -30,28 +31,53 @@ class ClothSampleBatch(GNN.GraphNetSampleBatch):
     target_world_pos : torch.Tensor
 
 class ClothModel(torch.nn.Module):
-    def __init__(
-        self,
-        input_dim : int = 3 + NodeType.SIZE,
-        output_dim : int = 3,
-        latent_size : int = 128,
-        num_edge_sets : int = 1,
-        num_layers : int = 2,
-        num_mp_steps : int = 15
-    ):
-        super().__init__()
-        self.graph_net = GNN.GraphNetModel(
-            input_dim,
-            [7],
-            output_dim,
-            latent_size,
-            num_edge_sets,
-            num_layers,
-            num_mp_steps)
+    @dataclass
+    class Config:
+        mesh_space_dim : int
+        world_space_dim : int
+        latent_size : int
+        num_mlp_layers : int
+        num_mp_steps : int
 
-        self.out_norm = GNN.InvertableNorm((output_dim,))
-        self.node_norm = GNN.InvertableNorm((input_dim,))
-        self.edge_norm = GNN.InvertableNorm((7,)) # 2D coord + 3D coord + 2*length = 7
+        @property
+        def num_edge_sets(self): return 1
+
+        @property
+        def n_edge_f(self):
+            return self.mesh_space_dim + self.world_space_dim + 2
+
+        @property
+        def input_dim(self): return self.world_space_dim + NodeType.SIZE
+
+        @property
+        def output_dim(self): return self.world_space_dim
+
+        @property
+        def graphnet_config(self):
+            return GNN.GraphNetModel.Config(
+                node_input_dim=self.input_dim,
+                edge_input_dims=[self.n_edge_f],
+                output_dim=self.output_dim,
+                latent_size=self.latent_size,
+                num_edge_sets=self.num_edge_sets,
+                num_mlp_layers=self.num_mlp_layers,
+                num_mp_steps=self.num_mp_steps
+            )
+
+    default_config = Config(
+        mesh_space_dim=2,
+        world_space_dim=3,
+        latent_size=128,
+        num_mlp_layers=2,
+        num_mp_steps=15
+    )
+
+    def __init__(self, config : Config = default_config):
+        super().__init__()
+        self.graph_net = GNN.GraphNetModel(config.graphnet_config)
+        self.out_norm = GNN.InvertableNorm((config.output_dim,))
+        self.node_norm = GNN.InvertableNorm((config.input_dim,))
+        self.edge_norm = GNN.InvertableNorm((config.n_edge_f,))
 
     def forward(self, x : ClothSampleBatch, unnorm : bool = True) -> torch.Tensor:
         """Predicts Delta V"""
@@ -77,7 +103,7 @@ class ClothModel(torch.nn.Module):
 
         graph = GNN.MultiGraph(
             node_features=self.node_norm(node_features),
-            edge_sets=[ GNN.EdgeSet(self.edge_norm(edge_features), srcs, dsts) ]
+            edge_sets=[GNN.EdgeSet(self.edge_norm(edge_features), srcs, dsts)]
         )
 
         net_out = self.graph_net(graph)
@@ -95,20 +121,6 @@ class ClothModel(torch.nn.Module):
         residuals = (target_accel_norm - pred).sum(dim=-1)
         mask = (x.node_type == NodeType.NORMAL).squeeze()
         return residuals[mask].pow(2).mean()
-
-    def import_numpy_weights(self, weights : dict[str, np.ndarray]):
-        def hookup_norm(mod, prefix):
-            mod.frozen = True
-            mod.accum_count = GNN.make_torch_buffer(weights[f'{prefix}/num_accumulations:0'])
-            mod.num_accum = GNN.make_torch_buffer(weights[f'{prefix}/acc_count:0'])
-            mod.running_sum = GNN.make_torch_buffer(weights[f'{prefix}/acc_sum:0'])
-            mod.running_sum_sq = GNN.make_torch_buffer(weights[f'{prefix}/acc_sum_squared:0'])
-
-        self.graph_net.import_numpy_weights(weights, ['mesh_edges_edge_fn'])
-
-        hookup_norm(self.out_norm, 'Model/output_normalizer')
-        hookup_norm(self.node_norm, 'Model/node_normalizer')
-        hookup_norm(self.edge_norm, 'Model/edge_normalizer')
 
 class ClothData(torch.utils.data.Dataset):
     def __init__(self, path):
@@ -149,6 +161,25 @@ class ClothData(torch.utils.data.Dataset):
             prev_world_pos=torch.Tensor(data['world_pos'][sid, ...]),
             target_world_pos=torch.Tensor(data['world_pos'][sid + 2, ...])
         )
+
+class ClothSyntheticData(ClothData):
+    def __init__(self, nx, ny, num_samples):
+        self.num_samples = num_samples
+
+        cells, pos = meshgen.gen_2d_tri_mesh(nx, ny)
+        world_pos = torch.cat([pos, torch.zeros(pos.shape[0], 1)], dim=-1)
+
+        self.sample = ClothSample(
+            cells=cells,
+            node_type=torch.zeros(pos.shape[0], dtype=torch.int64),
+            mesh_pos=pos,
+            world_pos=world_pos * 2.0,
+            prev_world_pos=world_pos - 0.5,
+            target_world_pos=world_pos * 0.5
+        )
+
+    def __len__(self): return self.num_samples
+    def __getitem__(self, idx : int) -> dict: return self.sample
 
 sample_type = ClothSample
 batch_type = ClothSampleBatch

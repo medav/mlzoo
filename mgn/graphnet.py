@@ -172,7 +172,7 @@ class InvertableNorm(torch.nn.Module):
         return mean, std
 
     def forward(self, x : torch.Tensor) -> torch.Tensor:
-        assert x.shape[-len(self.shape):] == self.shape
+        assert x.shape[-len(self.shape):] == self.shape, f'Expected shape {self.shape}, got {x.shape}'
         n_batch_dims = x.ndim - len(self.shape)
         batch_dims = tuple(i for i in range(n_batch_dims))
 
@@ -210,29 +210,32 @@ class Mlp(torch.nn.Module):
 
 
 class GraphNetBlock(torch.nn.Module):
-    def __init__(
-        self,
-        node_feature_dim : int,
-        edge_feature_dim : int,
-        num_edge_sets : int,
+    @dataclass
+    class Config:
+        node_feature_dim : int
+        edge_feature_dim : int
+        num_edge_sets : int
         mlp_widths : list[int]
-    ):
+
+    def __init__(self, config : Config):
         super().__init__()
-        self.num_edge_sets = num_edge_sets
+        self.config = config
+
         self.node_mlp = Mlp(
-            node_feature_dim + num_edge_sets * edge_feature_dim,
-            mlp_widths,
+            config.node_feature_dim + \
+                config.num_edge_sets * config.edge_feature_dim,
+            config.mlp_widths,
             layernorm=True)
 
         self.edge_mlps = torch.nn.ModuleList([
             Mlp(
-                2 * node_feature_dim + edge_feature_dim,
-                mlp_widths,
+                2 * config.node_feature_dim + config.edge_feature_dim,
+                config.mlp_widths,
                 layernorm=True)
-            for _ in range(num_edge_sets)
+            for _ in range(config.num_edge_sets)
         ])
 
-    def update_node_features(
+    def _update_node_features(
         self,
         node_features : torch.Tensor,
         edge_sets : list[EdgeSet]
@@ -246,7 +249,7 @@ class GraphNetBlock(torch.nn.Module):
 
         return self.node_mlp(torch.cat(features, dim=-1))
 
-    def update_edge_features(
+    def _update_edge_features(
         self,
         i : int,
         node_features : torch.Tensor,
@@ -261,11 +264,11 @@ class GraphNetBlock(torch.nn.Module):
         node_features = graph.node_features
         edge_sets = graph.edge_sets
 
-        assert len(edge_sets) == self.num_edge_sets
+        assert len(edge_sets) == self.config.num_edge_sets
 
         new_edge_sets = [
             EdgeSet(
-                features=self.update_edge_features(i, node_features, edge_set),
+                features=self._update_edge_features(i, node_features, edge_set),
                 senders=edge_set.senders,
                 receivers=edge_set.receivers,
                 offsets=edge_set.offsets
@@ -273,30 +276,33 @@ class GraphNetBlock(torch.nn.Module):
             for i, edge_set in enumerate(edge_sets)
         ]
 
-        new_node_features = self.update_node_features(node_features, new_edge_sets)
+        new_node_features = \
+            self._update_node_features(node_features, new_edge_sets)
 
-        for ei in range(self.num_edge_sets):
+        for ei in range(self.config.num_edge_sets):
             new_edge_sets[ei].features = \
                 new_edge_sets[ei].features + edge_sets[ei].features
 
         return MultiGraph(new_node_features + node_features, new_edge_sets)
 
-
 class GraphNetEncoder(torch.nn.Module):
-    def __init__(
-        self,
-        node_input_dim : int,
-        edge_input_dims : list[int],
-        latent_size : int,
-        num_edge_sets : int,
+    @dataclass
+    class Config:
+        node_input_dim : int
+        edge_input_dims : list[int]
+        latent_size : int
+        num_edge_sets : int
         num_layers : int
-    ):
+
+    def __init__(self, config : Config):
         super().__init__()
-        mlp_widths = [latent_size] * num_layers + [latent_size]
-        self.node_mlp = Mlp(node_input_dim, mlp_widths, layernorm=True)
+        mlp_widths = \
+            [config.latent_size] * config.num_layers + [config.latent_size]
+
+        self.node_mlp = Mlp(config.node_input_dim, mlp_widths, layernorm=True)
         self.edge_mlps = torch.nn.ModuleList([
-            Mlp(edge_input_dims[i], mlp_widths, layernorm=True)
-            for i in range(num_edge_sets)
+            Mlp(config.edge_input_dims[i], mlp_widths, layernorm=True)
+            for i in range(config.num_edge_sets)
         ])
 
     def forward(self, graph : MultiGraph) -> MultiGraph:
@@ -311,41 +317,66 @@ class GraphNetEncoder(torch.nn.Module):
                 for i, edge_set in enumerate(graph.edge_sets)
             ])
 
-
 class GraphNetDecoder(torch.nn.Module):
-    def __init__(
-        self,
-        latent_size : int,
-        output_size : int,
+    @dataclass
+    class Config:
+        latent_size : int
+        output_size : int
         num_layers : int
-    ):
+
+    def __init__(self, config : Config):
         super().__init__()
-        mlp_widths = [latent_size] * num_layers + [output_size]
-        self.node_mlp = Mlp(latent_size, mlp_widths, layernorm=False)
+        mlp_widths = \
+            [config.latent_size] * config.num_layers + [config.output_size]
+
+        self.node_mlp = Mlp(config.latent_size, mlp_widths, layernorm=False)
 
     def forward(self, graph : MultiGraph) -> torch.Tensor:
         return self.node_mlp(graph.node_features)
 
-
 class GraphNetModel(torch.nn.Module):
-    def __init__(
-        self,
-        node_input_dim : int,
-        edge_input_dims : list[int],
-        output_dim : int,
-        latent_size : int,
-        num_edge_sets : int,
-        num_layers : int,
+    @dataclass
+    class Config:
+        node_input_dim : int
+        edge_input_dims : list[int]
+        output_dim : int
+        latent_size : int
+        num_edge_sets : int
+        num_mlp_layers : int
         num_mp_steps : int
-    ):
-        super().__init__()
-        self.encoder = GraphNetEncoder(node_input_dim, edge_input_dims, latent_size, num_edge_sets, num_layers)
-        self.decoder = GraphNetDecoder(latent_size, output_dim, num_layers)
 
-        mp_mlp_widths = [latent_size] * num_layers + [latent_size]
+    def __init__(self, config : Config):
+        super().__init__()
+
+        self.encoder = GraphNetEncoder(
+            GraphNetEncoder.Config(
+                node_input_dim=config.node_input_dim,
+                edge_input_dims=config.edge_input_dims,
+                latent_size=config.latent_size,
+                num_edge_sets=config.num_edge_sets,
+                num_layers=config.num_mlp_layers
+            )
+        )
+
+        self.decoder = GraphNetDecoder(
+            GraphNetDecoder.Config(
+                latent_size=config.latent_size,
+                output_size=config.output_dim,
+                num_layers=config.num_mlp_layers
+            )
+        )
+
+        block_config = GraphNetBlock.Config(
+            node_feature_dim=config.latent_size,
+            edge_feature_dim=config.latent_size,
+            num_edge_sets=config.num_edge_sets,
+            mlp_widths=[config.latent_size] * config.num_mlp_layers + \
+                [config.latent_size]
+        )
+
         self.blocks = torch.nn.ModuleList([
-            GraphNetBlock(latent_size, latent_size, num_edge_sets, mp_mlp_widths)
-            for _ in range(num_mp_steps)
+            GraphNetBlock(block_config)
+            for _ in range(config.num_mp_steps)
         ])
 
     def forward(self, graph : MultiGraph) -> torch.Tensor:
