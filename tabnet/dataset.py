@@ -5,25 +5,7 @@ from . import model
 
 
 class CovertypeDataset(torch.utils.data.Dataset):
-    feature_cols = [
-        model.NumericColumn(0, 'Elevation'),
-        model.NumericColumn(1, 'Aspect'),
-        model.NumericColumn(2, 'Slope'),
-        model.NumericColumn(3, 'Horizontal_Distance_To_Hydrology'),
-        model.NumericColumn(4, 'Vertical_Distance_To_Hydrology'),
-        model.NumericColumn(5, 'Horizontal_Distance_To_Roadways'),
-        model.NumericColumn(6, 'Hillshade_9am'),
-        model.NumericColumn(7, 'Hillshade_Noon'),
-        model.NumericColumn(8, 'Hillshade_3pm'),
-        model.NumericColumn(9, 'Horizontal_Distance_To_Fire_Points')
-    ] + [
-        model.BoolColumn(10 + i, f'Wilderness_Area{i + 1}')
-        for i in range(4)
-    ] + [
-        model.BoolColumn(14 + i, f'Soil_Type{i + 1}')
-        for i in range(40)
-    ]
-
+    feature_cols = model.TabNet.covertype_cols
     label_col = model.IntColumn(54, 'CoverType')
 
     def __init__(self, filename):

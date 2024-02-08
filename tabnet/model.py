@@ -92,6 +92,36 @@ class TabNet(torch.nn.Module):
         @property
         def num_features(self): return len(self.cols)
 
+    covertype_cols = [
+        NumericColumn(0, 'Elevation'),
+        NumericColumn(1, 'Aspect'),
+        NumericColumn(2, 'Slope'),
+        NumericColumn(3, 'Horizontal_Distance_To_Hydrology'),
+        NumericColumn(4, 'Vertical_Distance_To_Hydrology'),
+        NumericColumn(5, 'Horizontal_Distance_To_Roadways'),
+        NumericColumn(6, 'Hillshade_9am'),
+        NumericColumn(7, 'Hillshade_Noon'),
+        NumericColumn(8, 'Hillshade_3pm'),
+        NumericColumn(9, 'Horizontal_Distance_To_Fire_Points')
+    ] + [
+        BoolColumn(10 + i, f'Wilderness_Area{i + 1}')
+        for i in range(4)
+    ] + [
+        BoolColumn(14 + i, f'Soil_Type{i + 1}')
+        for i in range(40)
+    ]
+
+    covertype_config = Config(
+        cols=covertype_cols,
+        hidden_dim=4,
+        out_dim=2,
+        num_classes=7,
+        num_decision_steps=6,
+        relaxation_factor=1.5,
+        epsilon=0.00001,
+        sparse_loss_weight=0.0001
+    )
+
     def __init__(self, config : Config):
         super().__init__()
         self.config = config

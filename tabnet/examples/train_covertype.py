@@ -4,16 +4,7 @@ import torch.utils.data
 from .. import model
 from .. import dataset
 
-config = model.TabNet.Config(
-    cols=dataset.CovertypeDataset.feature_cols,
-    hidden_dim=4,
-    out_dim=2,
-    num_classes=7,
-    num_decision_steps=6,
-    relaxation_factor=1.5,
-    epsilon=0.00001,
-    sparse_loss_weight=0.0001
-)
+config = model.TabNet.covertype_config
 
 net = model.TabNet(config).cuda()
 
