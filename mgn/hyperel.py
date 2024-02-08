@@ -266,14 +266,24 @@ class HyperElasticityData(torch.utils.data.Dataset):
         )
 
 class HyperElasticitySyntheticData(HyperElasticityData):
-    def __init__(self, nx, ny, nz, num_samples):
+    def __init__(self, mx, my, mz, wx, wy, wz, num_samples):
         self.num_samples = num_samples
 
-        cells, pos = meshgen.gen_3d_tet_mesh(nx, ny, nz)
+        mesh_cells, mesh_pos = meshgen.gen_3d_tet_mesh(mx, my, mz)
+        world_cells, world_pos = meshgen.gen_3d_tet_mesh(wx, wy, wz)
+
+        world_cells += mesh_pos.shape[0]
+        cells = torch.cat([mesh_cells, world_cells], dim=0)
+        pos = torch.cat([mesh_pos, world_pos], dim=0)
+
+        node_type = torch.cat([
+            torch.full((mesh_pos.shape[0],), int(NodeType.NORMAL), dtype=torch.int64),
+            torch.full((world_pos.shape[0],), int(NodeType.OBSTACLE), dtype=torch.int64)
+        ], dim=0)
 
         self.sample = HyperElasticitySample(
             cells=cells,
-            node_type=torch.zeros(pos.shape[0], dtype=torch.int64),
+            node_type=node_type,
             mesh_pos=pos,
             world_pos=pos * 2.0,
             target_world_pos=pos * 0.5,

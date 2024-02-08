@@ -4,7 +4,7 @@ import torch.utils.data
 from .. import graphnet as GNN
 from .. import hyperel
 
-ds = hyperel.HyperElasticitySyntheticData(10, 10, 10, 1024)
+ds = hyperel.HyperElasticitySyntheticData(10, 10, 10, 10, 10, 1, 1024)
 
 dl = torch.utils.data.DataLoader(
     ds,
