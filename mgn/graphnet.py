@@ -3,7 +3,7 @@ import enum
 from typing import Optional
 import torch
 import numpy as np
-from kernels import unsorted_segsum as USS
+from . import unsorted_segsum
 
 def make_torch_param(data): return torch.nn.Parameter(torch.tensor(data))
 def make_torch_buffer(data): return torch.tensor(data)
@@ -45,13 +45,6 @@ def cells_to_edges(cells : torch.LongTensor) -> tuple[torch.LongTensor, torch.Lo
     srcs, dsts = unique_edges[:, 0], unique_edges[:, 1]
 
     srcs, dsts = torch.cat([srcs, dsts], dim=0), torch.cat([dsts, srcs], dim=0)
-
-    if PRE_SORT_EDGES:
-        idxs = torch.argsort(dsts, dim=0, stable=True)
-        srcs, dsts = srcs[idxs], dsts[idxs]
-
-        idxs = torch.argsort(srcs, dim=0, stable=True)
-        srcs, dsts = srcs[idxs], dsts[idxs]
 
     return srcs, dsts
 
@@ -248,7 +241,7 @@ class GraphNetBlock(torch.nn.Module):
         features = [node_features]
 
         for edge_set in edge_sets:
-            features.append(USS.unsorted_segment_sum(
+            features.append(unsorted_segsum.unsorted_segment_sum(
                 edge_set.features, edge_set.receivers, num_nodes))
 
         return self.node_mlp(torch.cat(features, dim=-1))
@@ -363,65 +356,5 @@ class GraphNetModel(torch.nn.Module):
 
         return self.decoder(graph)
 
-    def import_numpy_weights(
-        self,
-        weights : dict[str, np.ndarray],
-        es_names : list[str]
-    ):
-        def hookup_mlp(mod, mlp_prefix, ln_prefix):
-            layer_norm_off = 0 if ln_prefix is None else 1
-
-            for l in range(len(mod.model) - layer_norm_off):
-                w = make_torch_param(weights[f'{mlp_prefix}/linear_{l}/w:0'].transpose(-1, -2))
-                assert tuple(w.shape) == tuple(mod.model[l][0].weight.shape)
-                mod.model[l][0].weight = w
-
-                b = make_torch_param(weights[f'{mlp_prefix}/linear_{l}/b:0'])
-                assert tuple(b.shape) == tuple(mod.model[l][0].bias.shape)
-                mod.model[l][0].bias = b
-
-            if ln_prefix is not None:
-                assert isinstance(mod.model[-1], torch.nn.modules.normalization.LayerNorm)
-                gamma = make_torch_param(weights[f'{ln_prefix}/gamma:0'])
-                assert tuple(gamma.shape) == tuple(mod.model[-1].weight.shape)
-                mod.model[-1].weight = gamma
-
-                beta = make_torch_param(weights[f'{ln_prefix}/beta:0'])
-                assert tuple(beta.shape) == tuple(mod.model[-1].bias.shape)
-                mod.model[-1].bias = beta
-
-        # Encoder
-        hookup_mlp(
-            self.encoder.node_mlp,
-            'EncodeProcessDecode/encoder/mlp',
-            'EncodeProcessDecode/encoder/layer_norm')
-
-        for e in range(len(self.encoder.edge_mlps)):
-            hookup_mlp(
-                self.encoder.edge_mlps[e],
-                f'EncodeProcessDecode/encoder/mlp_{e + 1}',
-                f'EncodeProcessDecode/encoder/layer_norm_{e + 1}')
-
-        # Message Passing
-        for i in range(len(self.blocks)):
-            block_prefix = f'EncodeProcessDecode/GraphNetBlock' if i == 0 else \
-                f'EncodeProcessDecode/GraphNetBlock_{i}'
-
-            hookup_mlp(
-                self.blocks[i].node_mlp,
-                f'{block_prefix}/node_fn/mlp',
-                f'{block_prefix}/node_fn/layer_norm')
-
-            for e in range(len(self.blocks[i].edge_mlps)):
-                hookup_mlp(
-                    self.blocks[i].edge_mlps[e],
-                    f'{block_prefix}/{es_names[e]}/mlp',
-                    f'{block_prefix}/{es_names[e]}/layer_norm')
-
-        # Decoder
-        hookup_mlp(
-            self.decoder.node_mlp,
-            'EncodeProcessDecode/decoder/mlp',
-            None)
 
 
