@@ -159,7 +159,7 @@ class TabNet(torch.nn.Module):
 
 
     def forward(self, cols : list[torch.Tensor]):
-        x = torch.stack([enc(x).squeeze() for enc, x in zip(self.encoders, cols)], dim=1)
+        x = torch.stack([enc(x).view(-1) for enc, x in zip(self.encoders, cols)], dim=1)
         x = self.enc_bn(x)
 
         batch_size = x.size(0)
