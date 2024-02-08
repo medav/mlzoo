@@ -1,20 +1,13 @@
+import os
+os.environ['TORCH_CUDA_ARCH_LIST'] = '8.0'
 
 import torch
-import torch.nn as nn
 from torch.utils.cpp_extension import load
-import os
+from torch.library import Library, impl
+
 import time
-import random
-import math
 
 cur_path = os.path.dirname(os.path.realpath(__file__))
-cpu_unsorted_segsum = load('cpu_unsorted_segsum',
-    [f'{cur_path}/cpu_extension.cc'],
-    extra_cflags=['-fopenmp', '-O3', '-march=native'],
-    extra_ldflags=['-lgomp', '-O3', '-march=native'],
-    verbose=False)
-
-import cpu_unsorted_segsum
 
 if torch.cuda.is_available():
     cuda_unsorted_segsum = load('cuda_unsorted_segsum',
@@ -39,32 +32,38 @@ def unsorted_segment_sum_ref(
         for i in range(num_segments)
     ], dim=0)
 
+
+lib = torch.library.Library("unsorted_segsum", "DEF")
+lib.define("unsorted_segment_sum_fwd(Tensor data, Tensor indices, int num_segments) -> Tensor")
+lib.define("unsorted_segment_sum_bwd(Tensor grad, Tensor indices) -> Tensor")
+
+
+@impl(lib, 'unsorted_segment_sum_fwd', 'Meta')
+def unsorted_segment_sum_fwd_meta(data, indices, num_segments):
+    return torch.empty((num_segments, data.size(1)), dtype=data.dtype, device='meta')
+
+@impl(lib, 'unsorted_segment_sum_fwd', 'CUDA')
+def unsorted_segment_sum_fwd_cuda(data, indices, num_segments):
+    return cuda_unsorted_segsum.unsorted_segment_sum_fwd(data, indices, num_segments)
+
+@impl(lib, 'unsorted_segment_sum_bwd', 'Meta')
+def unsorted_segment_sum_bwd_meta(grad, indices):
+    return torch.empty((indices.size(0), grad.size(1)), dtype=grad.dtype, device='meta')
+
+@impl(lib, 'unsorted_segment_sum_bwd', 'CUDA')
+def unsorted_segment_sum_bwd_cuda(grad, indices):
+    return cuda_unsorted_segsum.unsorted_segment_sum_bwd(grad, indices)
+
 class UnsortedSegmentSum(torch.autograd.Function):
     @staticmethod
     def forward(ctx, data : torch.Tensor, indices  : torch.Tensor, num_segments : int) -> torch.Tensor:
         ctx.save_for_backward(indices)
-
-        M = cuda_unsorted_segsum if data.device.type == 'cuda' else cpu_unsorted_segsum
-
-        assert M is not None, f'No backend for {data.device}'
-
-        if len(data.shape) == 2:
-            return M.unsorted_segment_sum_fwd(data, indices, num_segments)
-        else:
-            raise NotImplementedError()
+        return torch.ops.unsorted_segsum.unsorted_segment_sum_fwd(data.contiguous(), indices.contiguous(), num_segments)
 
     @staticmethod
     def backward(ctx, grad):
         indices, = ctx.saved_tensors
-
-        M = cuda_unsorted_segsum if grad.device.type == 'cuda' else cpu_unsorted_segsum
-
-        assert M is not None, f'No backend for {grad.device}'
-
-        if len(grad.shape) == 2:
-            return M.unsorted_segment_sum_bwd(grad.contiguous(), indices), None, None
-        else:
-            raise NotImplementedError()
+        return torch.ops.unsorted_segsum.unsorted_segment_sum_bwd(grad.contiguous(), indices.contiguous()), None, None
 
 def unsorted_segment_sum(
     data : torch.Tensor,
@@ -72,7 +71,6 @@ def unsorted_segment_sum(
     num_segments : int
 ) -> torch.Tensor:
     return UnsortedSegmentSum.apply(data, indices, num_segments)
-
 
 def unit_test_cpu():
     print('==== Correctness Test CPU ====')
