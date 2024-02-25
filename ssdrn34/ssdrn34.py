@@ -1,30 +1,141 @@
 import torch
-from torchvision.models.resnet import resnet34
-
+from dataclasses import dataclass
+from typing import Optional, Callable, Type, Union, List
 from . import multibox as MB
 
-def _patch_rn34_layer(layer : torch.nn.Module):
-    layer[0].conv1.stride = (1, 1)
-    layer[0].downsample[0].stride = (1, 1)
-    layer[1].conv1.stride = (1, 1)
-    layer[2].conv1.stride = (1, 1)
-    layer[3].conv1.stride = (1, 1)
-    layer[4].conv1.stride = (1, 1)
-    layer[5].conv1.stride = (1, 1)
-    return layer
+# Note: This is an adaptation from torchvision.models.resnet
+# See LICENSE.meta.torchvision for licensing details. I mostly wanted to remove
+# the extra cruft that torchvision has to accomodate all the variations of
+# ResNet. I also wanted to simplify the code around ResNetLayer (which used to
+# be the _make_layer member function) to reduce the amount of easy-to-miss state
+# that was being passed around.
 
-def _patch_rn34_for_ssd(rn34 : torch.nn.Module):
-    return torch.nn.Sequential(*[
-        rn34.conv1,
-        rn34.bn1,
-        rn34.relu,
-        rn34.maxpool,
-        rn34.layer1,
-        rn34.layer2,
-        _patch_rn34_layer(rn34.layer3)
-    ])
 
-def conv_block(
+class ResNetDownsample(torch.nn.Module):
+    @dataclass
+    class Config:
+        in_planes : int
+        out_planes : int
+        stride : int
+        norm : Type | callable
+
+    def __init__(self, config : Config):
+        super().__init__()
+
+        self.layers = torch.nn.Sequential(*[
+            torch.nn.Conv2d(
+                config.in_planes,
+                config.out_planes,
+                kernel_size=1,
+                stride=config.stride,
+                bias=False),
+            config.norm(config.out_planes)
+        ])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.layers(x)
+
+
+class ResNetBasicBlock(torch.nn.Module):
+    @dataclass
+    class Config:
+        in_planes : int
+        hid_planes : int
+        out_planes : int
+        downsample_by : int = 1
+        conv_groups : int = 1
+        norm : Type | callable = torch.nn.BatchNorm2d
+
+    def __init__(self, config: Config):
+        super().__init__()
+
+        self.layers = torch.nn.Sequential(*[
+            torch.nn.Conv2d(
+                config.in_planes,
+                config.hid_planes,
+                kernel_size=3,
+                stride=config.downsample_by \
+                    if config.downsample_by is not None else 1,
+                padding=1,
+                bias=False
+            ),
+
+            config.norm(config.hid_planes),
+            torch.nn.ReLU(inplace=True),
+
+            torch.nn.Conv2d(
+                config.hid_planes,
+                config.out_planes,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                groups=config.conv_groups,
+                bias=False
+            ),
+
+            config.norm(config.out_planes)
+        ])
+
+        self.relu = torch.nn.ReLU(inplace=True)
+
+        if config.downsample_by is None:
+            self.downsample = torch.nn.Identity()
+        else:
+            self.downsample = ResNetDownsample(
+                ResNetDownsample.Config(
+                    config.in_planes,
+                    config.out_planes,
+                    config.downsample_by,
+                    config.norm
+                )
+            )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.relu(self.layers(x) + self.downsample(x))
+
+
+class ResNetLayer(torch.nn.Module):
+    @dataclass
+    class Config:
+        in_planes : int
+        hid_planes : int
+        out_planes : int
+        num_blocks : int
+        downsample_by : int = None
+        conv_groups : int = 1
+        norm : Type | callable = torch.nn.Identity
+
+    def __init__(self, config: Config):
+        super().__init__()
+
+        block_config = ResNetBasicBlock.Config(
+            config.out_planes,
+            config.hid_planes,
+            config.out_planes,
+            downsample_by=None,
+            conv_groups=config.conv_groups
+        )
+
+        self.layers = torch.nn.Sequential(*[
+            ResNetBasicBlock(
+                ResNetBasicBlock.Config(
+                    config.in_planes,
+                    config.hid_planes,
+                    config.out_planes,
+                    downsample_by=config.downsample_by,
+                    conv_groups=config.conv_groups,
+                    norm=config.norm
+                )
+            )
+        ] + [
+            ResNetBasicBlock(block_config)
+            for _ in range(config.num_blocks - 1)
+        ])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.layers(x)
+
+def det_conv_block(
     in_chan : int,
     out_chan : int,
     int_chan : int,
@@ -40,7 +151,8 @@ def conv_block(
         torch.nn.ReLU(inplace=True)
     )
 
-class SsdRn34(torch.nn.Module):
+
+class SsdResNet34(torch.nn.Module):
     def __init__(
         self,
         input_size : tuple[int, int] = (300, 300), # TODO: Make this configurable
@@ -58,15 +170,52 @@ class SsdRn34(torch.nn.Module):
         self.chans = [256] + chans
 
         self.strides = strides
+        rn34_norm = torch.nn.BatchNorm2d
 
-        self.rn34 = _patch_rn34_for_ssd(resnet34())
-        self.blocks = torch.nn.ModuleList([
+        self.rn34 = torch.nn.Sequential(*[
+            torch.nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
+            rn34_norm(64),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            ResNetLayer(
+                ResNetLayer.Config(
+                    in_planes=64,
+                    hid_planes=64,
+                    out_planes=64,
+                    num_blocks=3,
+                    downsample_by=None,
+                    norm=rn34_norm
+                )
+            ),
+            ResNetLayer(
+                ResNetLayer.Config(
+                    in_planes=64,
+                    hid_planes=128,
+                    out_planes=128,
+                    num_blocks=4,
+                    downsample_by=2,
+                    norm=rn34_norm
+                )
+            ),
+            ResNetLayer(
+                ResNetLayer.Config(
+                    in_planes=128,
+                    hid_planes=256,
+                    out_planes=256,
+                    num_blocks=6,
+                    downsample_by=1,
+                    norm=rn34_norm
+                )
+            )
+        ])
+
+        self.det_blocks = torch.nn.ModuleList([
             self.rn34,
-            conv_block(self.chans[0], self.chans[1], 256, 1, 3, self.strides[0], 1),
-            conv_block(self.chans[1], self.chans[2], 256, 1, 3, self.strides[1], 1),
-            conv_block(self.chans[2], self.chans[3], 128, 1, 3, self.strides[2], 1),
-            conv_block(self.chans[3], self.chans[4], 128, 1, 3, self.strides[3], 0),
-            conv_block(self.chans[4], self.chans[5], 128, 1, 3, self.strides[4], 0)
+            det_conv_block(self.chans[0], self.chans[1], 256, 1, 3, self.strides[0], 1),
+            det_conv_block(self.chans[1], self.chans[2], 256, 1, 3, self.strides[1], 1),
+            det_conv_block(self.chans[2], self.chans[3], 128, 1, 3, self.strides[2], 1),
+            det_conv_block(self.chans[3], self.chans[4], 128, 1, 3, self.strides[3], 0),
+            det_conv_block(self.chans[4], self.chans[5], 128, 1, 3, self.strides[4], 0)
         ])
 
         self.det = MB.MultiboxDetector(
@@ -83,7 +232,7 @@ class SsdRn34(torch.nn.Module):
 
     def forward(self, x):
         activations = []
-        for l in self.blocks:
+        for l in self.det_blocks:
             x = l(x)
             activations.append(x)
 
@@ -91,7 +240,7 @@ class SsdRn34(torch.nn.Module):
 
 
 if __name__ == '__main__':
-    model = SsdRn34()
+    model = SsdResNet34()
     print(model)
 
     x = torch.randn(1, 3, 300, 300)
