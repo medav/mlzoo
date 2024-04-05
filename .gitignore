@@ -4,3 +4,5 @@ __pycache__
 *.sqlite
 *.nsys-rep
 *.pt
+*.pth
+*.pkl
