@@ -431,8 +431,9 @@ class MultiboxDetector(torch.nn.Module):
             keep = non_max_suppression(boxes_ltrbs, confs)
 
             for i in keep:
+                ltrb = (boxes_ltrbs[i].cpu().detach().clamp(0.0, 1.0) * ltrb_scale).numpy()
                 dets.append(SsdDetection(
-                    (boxes_ltrbs[i].cpu().detach() * ltrb_scale).numpy(),
+                    (ltrb[0], ltrb[1], ltrb[2] - ltrb[0], ltrb[3] - ltrb[1]),
                     labels[i] - 1
                 ))
 
