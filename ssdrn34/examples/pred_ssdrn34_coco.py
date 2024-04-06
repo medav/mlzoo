@@ -23,25 +23,18 @@ def main():
         coco = dataset.CocoDataset.from_pkl('coco.pkl', train=False)
     else:
         coco = dataset.CocoDataset.from_annotations(
-            '/home/medavies/coco/annotations/instances_train2014.json',
-            '/home/medavies/coco/train2014',
-            train=True)
+            '/home/medavies/coco/annotations/instances_val2017.json',
+            '/home/medavies/coco/val2017',
+            train=False)
 
         coco.save_pkl('coco.pkl')
 
     net = ssdrn34.SsdResNet34()
-    if os.path.exists('ssdrn34_coco.pth'):
-        print('Loading ssdrn34_coco.pth...')
-        net.load_state_dict(torch.load('ssdrn34_coco.pth'))
-    else:
-        net.load_pretrained_resnet34()
-
-    net.cuda()
-    net.freeze_backbone()
-    net.eval()
+    net.load_state_dict(torch.load('/research/data/mlmodels/ssdrn34.pth'))
+    net.cuda().eval()
 
     with torch.no_grad():
-        for i in range(1):
+        for i in range(len(coco)):
             img, dets = coco[i]
             print(f'[{i}]: {len(dets)} ground-truth detections')
 
@@ -51,10 +44,10 @@ def main():
                 print(coco.categories[det.label].name, det.ltrb)
 
             writer.add_image_with_boxes(
-                'example_imgs',
-                img,
+                f'coco_val2017[{i}]',
+                coco.get_img_raw(i),
                 torch.tensor([det.ltrb for det in dets]),
-                i,
+                0,
                 labels=[coco.categories[det.label].name for det in dets])
 
     writer.close()

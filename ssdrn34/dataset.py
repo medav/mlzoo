@@ -112,6 +112,7 @@ class CocoDataset(torch.utils.data.Dataset):
         self.img_dir = img_dir
         self.size = size
         self.train = train
+        self.resize = TVT.Resize(size, antialias=True)
         if train:
             self.transform = TVT.Compose([
                 CustomResize(size),
@@ -215,6 +216,16 @@ class CocoDataset(torch.utils.data.Dataset):
 
         img, dets = self.transform((img, record.dets))
         return img, dets
+
+    def get_img_raw(self, idx):
+        record : CocoImageRecord = self.records[idx]
+        img_file = os.path.join(self.img_dir, record.file)
+        img = torchvision.io.read_image(img_file)
+        if img.shape[0] == 1:
+            img = img.expand(3, -1, -1)
+
+
+        return self.resize(img.float() / 255.0)
 
 
 class CocoDatasetInMem(torch.utils.data.Dataset):
