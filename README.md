@@ -41,6 +41,6 @@ confidence / validation has been achieved.
 | [PINNs](./pinn) | 2019 | [ScienceDirect](https://www.sciencedirect.com/science/article/pii/S0021999118307125) | Level 2 | Physics-Informed Neural Networks |
 | [ResNet50](./resnet50) | 2015 | [arXiv](https://arxiv.org/pdf/1512.03385.pdf) | Level 1 | Image classification |
 | [RNN-T](./rnnt) | 2012 | [arXiv](https://arxiv.org/pdf/1211.3711.pdf) | Level 3 | Speech to text |
-| [SSD-ResNet34](./ssdrn34) | 2016 | [arXiv](https://arxiv.org/pdf/1512.02325.pdf) | Level 1 | Object detection |
+| [SSD-ResNet34](./ssdrn34) | 2016 | [arXiv](https://arxiv.org/pdf/1512.02325.pdf) | Level 2 | Object detection |
 | [TabNet](./tabnet) | 2019 | [arXiv](https://arxiv.org/pdf/1908.07442.pdf) | Level 2 | Learning on tabular data |
 | [3D-UNET](./unet) | 2016 | [arXiv](https://arxiv.org/pdf/1606.06650.pdf) | Level 1 | 3D image segmentation for cancer detection |
