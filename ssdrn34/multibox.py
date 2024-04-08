@@ -1,5 +1,6 @@
 import torch
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from enum import Enum
 import numpy as np
 
 #
@@ -91,10 +92,10 @@ def xywh_to_ltrb(xywh : torch.Tensor) -> torch.Tensor:
 def iou_ltrb(
     ltrb_a : torch.Tensor, # [N, 4]
     ltrb_b : torch.Tensor  # [M, 4]
-):
+) -> torch.Tensor:
     '''Calculate intersection over union for two sets of boxes.
 
-    This adapted was copied from:
+    This code was copied and adapted from the following source:
         https://github.com/kuangliu/pytorch-ssd/blob/master/encoder.py#L38
         See licenses/LICENSE.kuangliu.ssd for details.
     '''
@@ -128,11 +129,17 @@ def iou_ltrb(
     return intersection / union
 
 
-def non_max_suppression(bboxes_ltrb, scores, threshold=0.1, max_dets=100, mode='union'):
+def non_max_suppression(
+    bboxes_ltrb : torch.Tensor,
+    scores : torch.Tensor,
+    threshold : float = 0.1,
+    max_dets : int = 100,
+    mode : str = 'union'
+) -> torch.LongTensor:
     '''Non maximum suppression.
 
     Args:
-        bboxes: (tensor) bounding boxes, sized [N,4].
+        bboxes: (tensor) bounding boxes, sized [N,4] in LTRB format.
         scores: (tensor) bbox scores, sized [N,].
         threshold: (float) overlap threshold.
         mode: (str) 'union' or 'min'.
@@ -190,52 +197,60 @@ def non_max_suppression(bboxes_ltrb, scores, threshold=0.1, max_dets=100, mode='
 class Detector(torch.nn.Module):
     @dataclass
     class Config:
-        img_size : tuple[int, int]
-        det_size : tuple[int, int]
         in_chan : int
-        ratios : list[int]
-        minmax_size : tuple[int, int]
-        stride : int = 1
+        res_hw : tuple[int, int]
+        aspect_ratios : list[int]
+        min_size : float = None
+        max_size : float = None
+        num_classes : int = None
         scale_xy : float = 0.1
         scale_wh : float = 0.2
+        stride : int = 1
 
-    def __init__(self, config : Config, num_classes : int):
+    def __init__(self, config : Config):
         super().__init__()
         self.config = config
-        self.num_classes = num_classes
 
-        gm_size = np.sqrt(self.min_size * self.max_size)
+        min_size = self.config.min_size
+        max_size = self.config.max_size
+
+        gm_size = np.sqrt(min_size * max_size)
 
         self.box_sizes = [
-            (self.min_size, self.min_size),
+            (min_size, min_size),
             (gm_size, gm_size)
         ] + [
-            (self.min_size * np.sqrt(r), self.min_size / np.sqrt(r))
-            for r in self.config.ratios
+            (min_size * np.sqrt(r), min_size / np.sqrt(r))
+            for r in self.config.aspect_ratios
         ] + [
-            (self.min_size / np.sqrt(r), self.min_size * np.sqrt(r))
-            for r in self.config.ratios
+            (min_size / np.sqrt(r), min_size * np.sqrt(r))
+            for r in self.config.aspect_ratios
         ]
 
-        self.register_buffer('dboxes_cxywh', torch.tensor([
-            (
-                (x + 0.5) / self.det_w,
-                (y + 0.5) / self.det_h,
-                bw,
-                bh
-            )
-            for bw, bh in self.box_sizes
-            for y in range(self.det_h)
-            for x in range(self.det_w)
-        ]).clamp(0.0, 1.0), persistent=False)
-
-        # print(self.dboxes_cxywh.shape)
-        # print(self.dboxes_cxywh[:50, :])
+        self.register_buffer(
+            'dboxes_cxywh',
+            torch.tensor([
+                (
+                    (x + 0.5) / self.config.res_hw[1],
+                    (y + 0.5) / self.config.res_hw[0],
+                    bw,
+                    bh
+                )
+                for bw, bh in self.box_sizes
+                for y in range(self.config.res_hw[0])
+                for x in range(self.config.res_hw[1])
+            ]).clamp(0.0, 1.0),
+            persistent=False
+        )
 
         self.dboxes_cxywh : torch.Tensor
 
         self.register_buffer(
-            'dboxes_ltrb', cxywh_to_ltrb(self.dboxes_cxywh), persistent=False)
+            'dboxes_ltrb',
+            cxywh_to_ltrb(self.dboxes_cxywh),
+            persistent=False
+        )
+
         self.dboxes_ltrb : torch.Tensor
 
         self.loc = torch.nn.Conv2d(
@@ -248,35 +263,11 @@ class Detector(torch.nn.Module):
 
         self.conf = torch.nn.Conv2d(
             self.config.in_chan,
-            len(self.box_sizes) * self.num_classes,
+            len(self.box_sizes) * (self.config.num_classes + 1),
             kernel_size=3,
             padding=1,
             stride=self.config.stride
         )
-
-    @property
-    def img_h(self): return self.config.img_size[0]
-
-    @property
-    def img_w(self): return self.config.img_size[1]
-
-    @property
-    def det_h(self): return self.config.det_size[0]
-
-    @property
-    def det_w(self): return self.config.det_size[1]
-
-    # @property
-    # def scale_h(self): return self.img_h / self.det_h
-
-    # @property
-    # def scale_w(self): return self.img_w / self.det_w
-
-    @property
-    def min_size(self): return self.config.minmax_size[0]
-
-    @property
-    def max_size(self): return self.config.minmax_size[1]
 
     @property
     def num_boxes(self): return self.dboxes_cxywh.shape[0]
@@ -284,34 +275,16 @@ class Detector(torch.nn.Module):
     def forward(self, act : torch.Tensor):
         batch_size = act.size(0)
         loc = self.loc(act).view(batch_size, 4, -1).permute(0, 2, 1)
-        conf = self.conf(act).view(batch_size, self.num_classes, -1).permute(0, 2, 1)
+        conf = self.conf(act) \
+            .view(batch_size, self.config.num_classes + 1, -1).permute(0, 2, 1)
         return loc, conf
 
-    def detect(self, x : torch.Tensor):
-        pred_deltas, pred_conf = self.forward(x)
-        # pred_deltas : [B, NB, 4]
-        # pred_conf : [B, NB, C]
-
-        scale_xy = self.config.scale_xy
-        scale_wh = self.config.scale_wh
-
-        dboxes_cxy = self.dboxes_cxywh[:, :2]
-        dboxes_wh = self.dboxes_cxywh[:, 2:]
-
-        wh = torch.exp(pred_deltas[..., 2:] * scale_wh) * dboxes_cxy
-        cxy = pred_deltas[..., :2] * scale_xy * dboxes_wh + dboxes_cxy
-
-        boxes_ltrb = torch.cat([cxy - wh / 2, cxy + wh / 2], -1)
-        # boxes_ltrb : [B, NB, 4]
-
-        conf, labels = pred_conf.max(dim=-1)
-        # conf : [B, NB]
-        # labels : [B, NB]
-
-        return boxes_ltrb, conf, labels
-
-
-    def encode_dets(self, detss : list[list[SsdDetection]], iou_threshold : float = 0.5):
+    def encode(
+        self,
+        detss : list[list[SsdDetection]],
+        img_hw : tuple[int, int],
+        iou_threshold : float = 0.5
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         dev = self.dboxes_ltrb.device
         locs = []
         clss = []
@@ -320,13 +293,14 @@ class Detector(torch.nn.Module):
         dboxes_wh = self.dboxes_cxywh[:, 2:]
 
         loc_scale = torch.tensor([
-            self.img_w, self.img_h, self.img_w, self.img_h
+            img_hw[1], img_hw[0], img_hw[1], img_hw[0]
         ], device=dev)
 
         for dets in detss:
             if len(dets) == 0:
                 locs.append(torch.zeros((self.num_boxes, 4), device=dev))
-                clss.append(torch.zeros(self.num_boxes, device=dev, dtype=torch.long))
+                clss.append(torch.zeros(
+                    self.num_boxes, device=dev, dtype=torch.long))
                 continue
 
             ltrb = torch.tensor([
@@ -361,55 +335,108 @@ class Detector(torch.nn.Module):
 
         return torch.stack(locs), torch.stack(clss)
 
+    def detect(self, x : torch.Tensor):
+        pred_deltas, pred_conf = self.forward(x)
+        # pred_deltas : [B, NB, 4]
+        # pred_conf : [B, NB, C]
+
+        scale_xy = self.config.scale_xy
+        scale_wh = self.config.scale_wh
+
+        dboxes_cxy = self.dboxes_cxywh[:, :2]
+        dboxes_wh = self.dboxes_cxywh[:, 2:]
+
+        wh = torch.exp(pred_deltas[..., 2:] * scale_wh) * dboxes_cxy
+        cxy = pred_deltas[..., :2] * scale_xy * dboxes_wh + dboxes_cxy
+
+        boxes_ltrb = torch.cat([cxy - wh / 2, cxy + wh / 2], -1)
+        # boxes_ltrb : [B, NB, 4]
+
+        conf, labels = pred_conf.max(dim=-1)
+        # conf : [B, NB]
+        # labels : [B, NB]
+
+        return boxes_ltrb, conf, labels
+
+
+class DboxSizes(Enum):
+    COMPUTE = 0
+    EXPLICIT = 1
+
 
 class MultiboxDetector(torch.nn.Module):
-
-    def __init__(
-        self,
-        num_classes : int,
+    @dataclass
+    class Config:
+        num_classes : int
+        dbox_sizes : DboxSizes
         dconfig : list[Detector.Config]
-    ):
+        s_min : float = None
+        s_max : float = None
+
+    def __init__(self, config : Config):
         super().__init__()
-        self.num_classes = num_classes
+        self.config = config
+
+
+        if self.config.dbox_sizes == DboxSizes.COMPUTE:
+            assert self.config.s_min is not None
+            assert self.config.s_max is not None
+
+            k = np.array(range(len(self.config.dconfig) + 1)) + 1
+
+            s_min = self.config.s_min
+            s_max = self.config.s_max
+
+            sk = s_min + (s_max - s_min) / (len(k) - 2) * (k - 1)
+
+            min_sizes = sk[:-1]
+            max_sizes = sk[1:]
+
+        elif self.config.dbox_sizes == DboxSizes.EXPLICIT:
+            min_sizes = [dc.min_size for dc in self.config.dconfig]
+            max_sizes = [dc.max_size for dc in self.config.dconfig]
+
+        else:
+            raise ValueError('Invalid dbox_sizes')
+
 
         self.dets = torch.nn.ModuleList([
-            Detector(p, num_classes) for p in dconfig
+            Detector(replace(
+                dc,
+                num_classes=self.config.num_classes,
+                min_size=min_sizes[i],
+                max_size=max_sizes[i]
+            ))
+            for i, dc in enumerate(self.config.dconfig)
         ])
 
         self.dets : list[Detector]
 
     def forward(self, xs : list[torch.Tensor]):
-        pred_locs = []
-        pred_logitss = []
+        pred = [det.forward(x) for det, x in zip(self.dets, xs)]
 
-        for detector, x in zip(self.dets, xs):
-            pred_loc, pred_logits = detector.forward(x)
-            pred_locs.append(pred_loc)
-            pred_logitss.append(pred_logits)
+        pred_locs = torch.cat([p[0] for p in pred], dim=1)
+        pred_labels = torch.cat([p[1] for p in pred], dim=1)
 
-        pred_locs = torch.cat(pred_locs, dim=1)           # [B, NB,  4]
-        pred_logitss = torch.cat(pred_logitss, dim=1)     # [B, NB, NC]
+        return pred_locs, pred_labels
 
-        return pred_locs, pred_logitss
+    def encode(self, detss : list[list[SsdDetection]]):
+        encoded = [det.encode(detss) for det in self.dets]
+
+        target_locs = torch.cat([e[0] for e in encoded], dim=1)
+        target_labels = torch.cat([e[1] for e in encoded], dim=1)
+
+        return target_locs, target_labels
 
     def detect(self, xs : list[torch.Tensor], img_hw : tuple[int, int]):
-        boxes_ltrbss = []
-        confss = []
-        labelss = []
+        det_outs = [det.detect(x) for x, det in zip(xs, self.dets)]
+        boxes_ltrbss = torch.cat([do[0] for do in det_outs], dim=1)
+        confss = torch.cat([do[1] for do in det_outs], dim=1)
+        labelss = torch.cat([do[2] for do in det_outs], dim=1)
 
         ltrb_scale = torch.tensor([
             img_hw[1], img_hw[0], img_hw[1], img_hw[0]
         ], device='cpu')
-
-        for x, det in zip(xs, self.dets):
-            boxes_ltrbs, confs, labels = det.detect(x)
-            boxes_ltrbss.append(boxes_ltrbs)
-            confss.append(confs)
-            labelss.append(labels)
-
-        boxes_ltrbss = torch.cat(boxes_ltrbss, dim=1)
-        confss = torch.cat(confss, dim=1)
-        labelss = torch.cat(labelss, dim=1)
 
         detss = []
 
@@ -440,17 +467,6 @@ class MultiboxDetector(torch.nn.Module):
             detss.append(dets)
 
         return detss
-
-    def encode_dets(self, detss : list[list[SsdDetection]]):
-        target_locs = []
-        target_labelss = []
-
-        for det in self.dets:
-            target_loc, target_labels = det.encode_dets(detss)
-            target_locs.append(target_loc)
-            target_labelss.append(target_labels)
-
-        return torch.cat(target_locs, dim=1), torch.cat(target_labelss, dim=1)
 
     def loc_loss(
         self,
@@ -504,7 +520,6 @@ class MultiboxDetector(torch.nn.Module):
         return torch.nn.functional.cross_entropy(
             preds, targets, reduction='sum')
 
-
     def loss(
         self,
         xs : list[torch.Tensor],
@@ -529,6 +544,4 @@ class MultiboxDetector(torch.nn.Module):
         conf_loss = self.conf_loss(pred_logitss, target_labelss, pos_dets)
 
         return (loc_loss + conf_loss) / num_matched_boxes
-
-
 

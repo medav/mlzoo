@@ -1,6 +1,6 @@
 import torch
 from dataclasses import dataclass
-from typing import Optional, Callable, Type, Union, List
+from typing import Type
 from . import multibox as MB
 
 # Note: This is an adaptation from torchvision.models.resnet
@@ -164,7 +164,7 @@ class SsdResNet34(torch.nn.Module):
     def __init__(
         self,
         input_size : tuple[int, int] = (300, 300), # TODO: Make this configurable
-        num_classes : int = 81,
+        num_classes : int = 80,
         chans : list[int] = [512, 512, 256, 256, 256],
         strides : list[int] = [2, 2, 2, 2, 1]
     ):
@@ -226,15 +226,18 @@ class SsdResNet34(torch.nn.Module):
         ])
 
         self.det = MB.MultiboxDetector(
-            num_classes,
-            [
-                MB.Detector.Config(input_size, (38, 38), self.chans[0], [2],    ( 21 / 300,  45 / 300)),
-                MB.Detector.Config(input_size, (19, 19), self.chans[1], [2, 3], ( 45 / 300,  99 / 300)),
-                MB.Detector.Config(input_size, (10, 10), self.chans[2], [2, 3], ( 99 / 300, 153 / 300)),
-                MB.Detector.Config(input_size, (5, 5),   self.chans[3], [2, 3], (153 / 300, 207 / 300)),
-                MB.Detector.Config(input_size, (3, 3),   self.chans[4], [2],    (207 / 300, 261 / 300)),
-                MB.Detector.Config(input_size, (1, 1),   self.chans[5], [2],    (261 / 300, 315 / 300))
-            ])
+            MB.MultiboxDetector.Config(
+                num_classes,
+                MB.DboxSizes.EXPLICIT,
+                [
+                    MB.Detector.Config(self.chans[0], (38, 38), [2],    min_size= 21 / 300, max_size= 45 / 300),
+                    MB.Detector.Config(self.chans[1], (19, 19), [2, 3], min_size= 45 / 300, max_size= 99 / 300),
+                    MB.Detector.Config(self.chans[2], (10, 10), [2, 3], min_size= 99 / 300, max_size=153 / 300),
+                    MB.Detector.Config(self.chans[3], (5, 5),   [2, 3], min_size=153 / 300, max_size=207 / 300),
+                    MB.Detector.Config(self.chans[4], (3, 3),   [2],    min_size=207 / 300, max_size=261 / 300),
+                    MB.Detector.Config(self.chans[5], (1, 1),   [2],    min_size=261 / 300, max_size=315 / 300)
+                ]
+        ))
 
 
     def forward(self, x):
@@ -323,11 +326,4 @@ class SsdResNet34(torch.nn.Module):
     def freeze_backbone(self):
         for p in self.det_blocks[0].parameters():
             p.requires_grad = False
-
-if __name__ == '__main__':
-    model = SsdResNet34()
-    model.load_pretrained_resnet34()
-
-    x = torch.randn(1, 3, 300, 300)
-    loc, conf = model(x)
 
